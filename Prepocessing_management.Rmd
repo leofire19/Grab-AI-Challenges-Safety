@@ -1,0 +1,139 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+library(tidyverse)
+library(geohash)
+library(magrittr)
+library(lubridate)
+```
+
+```{r}
+?gather
+```
+
+```{r}
+data_tm <- data.table::fread("Traffic Management/training.csv")
+```
+
+```{r}
+glimpse(data_tm)
+```
+
+```{r}
+date_format <- read_csv2(file="Traffic Management/date_format.csv")
+```
+
+
+```{r}
+geohash_encode <- data_tm %$% 
+  unique(geohash6) %>% 
+  gh_decode()
+
+`?`(strptime)
+data_full_tm <- data_tm %>% 
+  left_join(geohash_encode,by=c("geohash6"="gh"))%>%
+  arrange(geohash6,day,timestamp) %>% 
+  left_join(date_format,by=c("day")) 
+# 
+# data_full_tm <- data_full_tm%>%
+#   mutate(ts=paste(date,timestamp))
+
+#data_full_tm$ts <- as.POSIXct(data_full_tm$ts,format = "%d/%m/%Y %h:%m")
+
+data_clean <- data_full_tm %>% 
+  separate(timestamp,c("Hour","Minute"),sep = "\\:") %>% 
+  separate(date,c("Day","Month","Year"),sep = "/") %<>%
+  mutate(Hour = as.integer(Hour),
+         Minute = as.integer(Minute),
+         Year = as.integer(Year),
+         Month = as.integer(Month),
+         Day = as.integer(Day)) %>% 
+  mutate(ts=make_datetime(Year,Month,Day,Hour,Minute ))
+
+glimpse(data_clean)
+glimpse(data_full_tm)
+```
+
+```{r}
+data_partisi <- data_clean%>% 
+  select(geohash6,lat,lng,ts,demand)
+
+ct_partisi <- data_partisi %>%
+  group_by(geohash6,lat,lng) %>% 
+  spread(ts,demand)
+
+colSums(is.na(ct_partisi)) %>% 
+  as.data.frame() %>% 
+  tibble::rownames_to_column() ->date_na
+colnames(date_na)[2] <- "is_na" 
+date_na <- date_na[-1,]
+date_na <- date_na %>% arrange(is_na)
+date_na
+Amelia::missmap(ct_partisi)
+
+ct_partisi[is.na(ct_partisi)] <- 0
+```
+
+```{r}
+ct_partisi_loc <- data_partisi %>%
+  group_by(geohash6,lat,lng) %>% 
+  spread(geohash6,demand)
+
+colnames(loc_na)[2] <- "is_na" 
+loc_na <- loc_na[-1,]
+loc_na <- loc_na %>% arrange(is_na)
+
+Amelia::missmap(ct_partisi_loc)
+```
+
+```{r}
+ct_day <- data_clean %>%
+  group_by(geohash6,day) %>% 
+  summarise(n=n()) %>% 
+  spread(day,n)
+ct_day
+```
+#Clustering
+```{r}
+library(dtwclust)
+library(TSclust)
+library(factoextra)
+library(cluster)
+library(NbClust)
+data_cluster <- ct_partisi %>% 
+  column_to_rownames(var = "geohash6")
+Dwt <- diss(as.matrix(data_cluster %>% 
+                        select(-lat,-lng)), "DTWARP")
+fviz_nbclust(data, hcut,diss=Dwt, method = "wss")
+
+```
+#EDA
+#Agregated Data
+-General Pattern
+```{r}
+ct_partisi %>% 
+  column_to_rownames(var="geohash6") %>% 
+  select(-lat,-lng) %>% 
+  colSums() %>% 
+  as.data.frame() %>% 
+  rownames_to_column(var = "Date") %>% 
+  set_colnames(c("Date","Demand")) %<>% 
+  mutate(Date=as_datetime(Date)) %>% 
+  ggplot(aes(x = hour(Date), y = Demand))+
+  geom_line(color = "#00AFBB", size = 1)
+
+```
+
+```{r}
+
+```
+
+#Cv
+```{r}
+
+```
+
