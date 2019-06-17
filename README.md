@@ -1,7 +1,7 @@
 # Grab-AI-Challenges-Safety
 Project for Grab AI Challenges - Making a model to predict safety in trips 
 # Author : Aldo Leofiro Irfiansyah
-# Politeknik Statistik STIS- Computational Statistics Data Science
+Politeknik Statistik STIS- Computational Statistics Data Science
 In this project, I am using R programming language with Rstudio. 
 So to run the program , install and open the latest release of R and Rstudio.
 with rmarkdown package installed. *The detailed instruction in  the rmd notebook file.
