@@ -1,0 +1,879 @@
+---
+title: "Grab AI Challanges - Safety"
+author: "Aldo Leofiro Irfiansyah"
+date: "6/17/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+#Multistage Combination Methods to predict Safety trip
+
+#Import Library
+```{r}
+install.packages("pacman")
+pacman::p_load(
+  "tidyverse",#Library for data manipulation
+  "data.table",#Library for open large csv data
+  "caret",#Library for machine learning, especially for confussion
+  "pROC",#Library for calculate ROC-AUC
+  "randomForest",#Library for Random Forest Alghoritm
+  "kableExtra",
+  "corrplot"
+)
+getwd()#To see where Project Working Directory
+```
+
+#Data Loading
+In this project, I load the separeted chunck dataset into list and reduce it into one data frame object.  
+In this process will take a quite time.  
+I use a Computer with specification:
+- Windows 10 Pro 64-bit
+- Intel Core i7-7700k 4.20 Ghz (8 CPUs)
+- 32 GB RAM
+- 2x NVIDIA Geforce GTX 1080Ti
+
+```{r open-dataset}
+path <-  "dataset/"
+temp <-  list.files(path)
+data_safety <- list() 
+for (i in 1:length(temp)){ 
+  link <- paste(path,temp[i],sep = "")
+  data_safety[[i]] <- fread(link) 
+}
+data_full <- reduce(data_safety,bind_rows)
+rm(data_safety)
+data_full <- data_full %>%
+  mutate(bookingID=as.character(bookingID))
+```
+
+```{r open-labels}
+path_label <-  "labels/"
+temp <-  list.files(path_label)
+label <- fread(paste(path_label,temp[1],sep = ""))
+label <- label%>%
+  mutate(bookingID=as.character(bookingID))
+```
+
+#Exploratory Data ANalysis - EDA
+
+##Data Summary
+```{r EDA-summary feature}
+glimpse(data_full)
+cat("\n Summary \n")
+summary(data_full)
+```
+
+##Check Missing Value
+```{r EDA-missing value}
+sort(sapply(data_full, 
+            function(x) { sum(is.na(x)) }), 
+     decreasing=TRUE)
+```
+
+##Check Duplicated Data
+```{r EDA-duplicated data}
+duplicated_data <- label %>% 
+  group_by(bookingID) %>%
+  mutate(rank=row_number(bookingID)) %>%
+  filter(rank>1)
+duplicated_data
+```
+
+In the table we know that there are 18 rows that duplicated. So We have to remove them from the dataset
+```{r EDA-filter Duplicated Data}
+`%!in%` = Negate(`%in%`)
+data_clean <- data_full %>% 
+  filter(bookingID%!in%duplicated_data$bookingID)
+rm(data_full)
+```
+
+
+```{r EDA-freq_table}
+freq_table <- data_clean %>% 
+  mutate(rowId=1:nrow(data_clean)) %>% 
+  filter(bookingID%!in%duplicated_data$bookingID) %>% 
+  group_by(bookingID) %>% 
+  summarise(n=n())
+glimpse(freq_table)
+cat("\n Summary \n")
+summary(freq_table)
+```
+
+```{r EDA-freq_label}
+table(label$label)
+```
+
+```{r head-data_clean}
+head(data_clean)
+```
+ 
+#Feature Extraction or Creation
+Features Extraction:
+Based on basic knowledge of the vector, speed, and the law of pyshics.
+Such as;
+ - distance = second(time)*Speed.
+ - length of vector = square root of the sum square of its component.
+    sqrt(x^2+y^2+z^2)
+Then, trying to extract the statics from each feature. Mean, mode, median, sd.
+
+```{r feature_extraction}
+getmode <- function(v) {
+   uniqv <- unique(v)
+   uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+feature_set <- data_clean%>% 
+  mutate(
+    distance = second*Speed,
+    acceleration_total = sqrt((acceleration_x^2)+(acceleration_y^2)+(acceleration_z^2)),
+    gyro_total = sqrt((gyro_x^2)+(gyro_y^2)+(gyro_z^2))
+  ) %>% 
+  group_by(bookingID) %>% 
+  summarise(
+    n = n(),
+    Accuracy_mean = mean(Accuracy),
+    Accuracy_mode = getmode(Accuracy),
+    Accuracy_median = median(Accuracy),
+    Accuracy_sd = var(Accuracy),
+    Accuracy_min = min(Accuracy),
+    Accuracy_max = max(Accuracy),
+    Bearing_mean = mean(Bearing),
+    Bearing_mode = getmode(Bearing),
+    Bearing_median = median(Bearing),
+    Bearing_sd = var(Bearing),
+    Bearing_min = min(Bearing),
+    Bearing_max = max(Bearing),
+    acceleration_x_mean = mean(acceleration_x),
+    acceleration_x_mode = getmode(acceleration_x),
+    acceleration_x_median = median(acceleration_x),
+    acceleration_x_sd = var(acceleration_x),
+    acceleration_x_min = min(acceleration_x),
+    acceleration_x_max = max(acceleration_x),
+    acceleration_y_mean = mean(acceleration_y),
+    acceleration_y_mode = getmode(acceleration_y),
+    acceleration_y_median = median(acceleration_y),
+    acceleration_y_sd = var(acceleration_y),
+    acceleration_y_min = min(acceleration_y),
+    acceleration_y_max = max(acceleration_y),
+    acceleration_z_mean = mean(acceleration_z),
+    acceleration_z_mode = getmode(acceleration_z),
+    acceleration_z_median = median(acceleration_z),
+    acceleration_z_sd = var(acceleration_z),
+    acceleration_z_min = min(acceleration_z),
+    acceleration_z_max = max(acceleration_z),
+    gyro_x_mean = mean(gyro_x),
+    gyro_x_mode = getmode(gyro_x),
+    gyro_x_median = median(gyro_x),
+    gyro_x_sd = var(gyro_x),
+    gyro_x_min = min(gyro_x),
+    gyro_x_max = max(gyro_x),
+    gyro_y_mean = mean(gyro_y),
+    gyro_y_mode = getmode(gyro_y),
+    gyro_y_median = median(gyro_y),
+    gyro_y_sd = var(gyro_y),
+    gyro_y_min = min(gyro_y),
+    gyro_y_max = max(gyro_y),
+    gyro_z_mean = mean(gyro_z),
+    gyro_z_mode = getmode(gyro_z),
+    gyro_z_median = median(gyro_z),
+    gyro_z_sd = var(gyro_z),
+    gyro_z_min = min(gyro_z),
+    gyro_z_max = max(gyro_z),
+    speed_mean = mean(Speed),
+    speed_mode = getmode(Speed),
+    speed_median = median(Speed),
+    speed_sd = var(Speed),
+    speed_min = min(Speed),
+    speed_max = max(Speed),
+    second_mean = mean(second),
+    second_mode = getmode(second),
+    second_median = median(second),
+    second_sd = var(second),
+    second_min = min(second),
+    second_max = max(second),
+    second_total = sum(second),
+    distance_mean = mean(distance),
+    distance_mode = getmode(distance),
+    distance_median = median(distance),
+    distance_sd = var(distance),
+    distance_min = min(distance),
+    distance_max = max(distance),
+    distance_total = sum(distance),
+    acceleration_total_mean = mean(acceleration_total),
+    acceleration_total_mode = getmode(acceleration_total),
+    acceleration_total_median = median(acceleration_total),
+    acceleration_total_sd = var(acceleration_total),
+    acceleration_total_min = min(acceleration_total),
+    acceleration_total_max = max(acceleration_total),
+    gyro_total_mean = mean(gyro_total),
+    gyro_total_mode = getmode(gyro_total),
+    gyro_total_median = median(gyro_total),
+    gyro_total_sd = var(gyro_total),
+    gyro_total_min = min(gyro_total),
+    gyro_total_max = max(gyro_total),
+  ) %>% 
+  mutate(
+    acceleration_agr_mean = sqrt((acceleration_x_mean^2) + 
+                                 (acceleration_y_mean^2)+
+                                 (acceleration_z_mean^2)),
+    acceleration_agr_mode = sqrt((acceleration_x_mode^2) + 
+                                 (acceleration_y_mode^2)+
+                                 (acceleration_z_mode^2)),
+    acceleration_agr_median = sqrt((acceleration_x_median^2) + 
+                                 (acceleration_y_median^2)+
+                                 (acceleration_z_median^2)),
+    acceleration_agr_min = sqrt((acceleration_x_min^2) + 
+                                 (acceleration_y_min^2)+
+                                 (acceleration_z_min^2)),
+    acceleration_agr_max = sqrt((acceleration_x_max^2) + 
+                                 (acceleration_y_max^2)+
+                                 (acceleration_z_max^2)),
+    gyro_agr_mean = sqrt((gyro_x_mean^2) + 
+                                 (gyro_y_mean^2)+
+                                 (gyro_z_mean^2)),
+    gyro_agr_mode = sqrt((gyro_x_mode^2) + 
+                                 (gyro_y_mode^2)+
+                                 (gyro_z_mode^2)),
+    gyro_agr_median = sqrt((gyro_x_median^2) + 
+                                 (gyro_y_median^2)+
+                                 (gyro_z_median^2)),
+    gyro_agr_min = sqrt((gyro_x_min^2) + 
+                                 (gyro_y_min^2)+
+                                 (gyro_z_min^2)),
+    gyro_agr_max = sqrt((gyro_x_max^2) + 
+                                 (gyro_y_max^2)+
+                                 (gyro_z_max^2))
+  )
+glimpse(feature_set)
+```
+
+```{r}
+Data_Feature_set <- feature_set %>%
+  inner_join(label,by ="bookingID")  %>% 
+  column_to_rownames(var = "bookingID")
+
+feature_set_comb <- Data_Feature_set %>% 
+  select(
+    n,
+    Accuracy_mean,
+    Bearing_sd,
+    acceleration_x_mean,
+    acceleration_x_sd,
+    acceleration_x_min,
+    acceleration_x_max,
+    acceleration_y_mean,
+    acceleration_y_sd,
+    acceleration_y_min,
+    acceleration_y_max,
+    acceleration_z_mean,
+    acceleration_z_sd,
+    acceleration_z_min,
+    acceleration_z_max,
+    gyro_x_mean,
+    gyro_x_sd,
+    gyro_x_min,
+    gyro_x_max,
+    gyro_y_mean,
+    gyro_y_sd,
+    gyro_y_min,
+    gyro_y_max,
+    gyro_z_mean,
+    gyro_z_sd,
+    gyro_z_min,
+    gyro_z_max,
+    contains("agr"),
+    contains("total"),
+    contains("speed"),
+    distance_total,
+    label
+  )
+glimpse(feature_set_comb)
+```
+
+#Data Split Train Test
+Split the data into two part : 70% for Data Training and 30% for Data Testing
+```{r}
+set.seed(2019)
+data_model <- feature_set_comb
+data_model$label <- as.factor(data_model$label)
+n <- nrow(data_model)
+i_test <- sample(1:n,size = 0.3 * n)
+i_train <- (1:n)[-i_test]
+Data_test <- data_model[i_test,]
+Data_train <- data_model[i_train,]
+```
+
+```{r}
+cat("\n Data Train \n")
+prop.table(table(Data_train$label))
+cat("\n Data Test \n")
+prop.table(table(Data_test$label))
+```
+
+#Data Modeling
+
+#First Learner
+## Logistic Regression
+###Feature Selection :
+```{r warning=FALSE}
+control <- trainControl(method="repeatedcv", number=10, repeats=3)
+
+log.reg.model <- train(label~., 
+                       data=Data_train, 
+                       method="glm", 
+                       preProcess="scale", 
+                       trControl=control)
+
+summary(log.reg.model)
+```
+#Feature Selection
+In this project, I select feature based on the feature significancy to the model, and the importance based on caret package
+
+```{r}
+feature_sign <- summary(log.reg.model)$coeff[-1,4] < 0.05 
+
+feature_sign <- feature_sign%>% 
+  as.data.frame() 
+
+colnames(feature_sign) <- "signiffication"
+
+#Select the feature that significant to the model
+
+feature_sign_sel <- feature_sign %>% 
+  mutate(feature=rownames(feature_sign)) %>% 
+  filter(signiffication==TRUE)
+
+feature_vif <- varImp(log.reg.model) %>% 
+  mutate(feature=rownames(varImp(log.reg.model))) %>% 
+  arrange(desc(Overall))
+
+#Select the feature that has importance measure >1
+feature_vif_sel <- feature_vif %>% 
+  filter(Overall>1)
+```
+
+```{r}
+plot(varImp(log.reg.model))
+```
+
+```{r}
+feature_selected.logreg <- feature_sign_sel %>% 
+  inner_join(feature_vif_sel,by="feature")
+```
+
+#Modeling
+```{r warning=FALSE}
+Data_train_logreg <- Data_train %>% 
+  select(feature_selected.logreg$feature,label)
+Data_test_logreg <- Data_test %>% 
+  select(feature_selected.logreg$feature,label)
+
+log.reg.model_fix <- train(label~., 
+                       data=Data_train_logreg, 
+                       method="glm", 
+                       preProcess="scale", 
+                       trControl=control)
+
+summary(log.reg.model)
+```
+
+#Predict
+```{r}
+logreg.predict <- predict(log.reg.model_fix, 
+                          Data_test_logreg %>% 
+                            select(-label), 
+                          type="prob")  
+logreg.pred <- ifelse(logreg.predict[,2]>=0.5,1,0) %>% 
+  as.factor
+
+confusionMatrix(logreg.pred,
+                Data_test$label %>% 
+                  as.factor(),
+                positive = "1")
+```
+```{r}
+auc(Data_test$label 
+    %>% as.factor(),
+    logreg.pred %>% 
+      as.numeric())
+```
+
+#Second Learner
+#Random Forest
+```{r}
+randomForest.model <- randomForest(label ~ . ,
+                                   data = Data_train)
+summary(randomForest.model)
+```
+
+#Feature Selection
+Select Feature that has overall importance value more than average.
+```{r}
+feature_vif.rf <- varImp(randomForest.model,scale=F) %>% 
+  mutate(feature=rownames(varImp(randomForest.model))) %>% 
+  arrange(desc(Overall))
+```
+
+```{r}
+varImpPlot(randomForest.model)
+```
+```{r}
+feature_selected.rf <- feature_vif.rf %>% 
+  filter(Overall>=mean(Overall))
+
+feature_selected.rf
+```
+#Modeling
+```{r}
+Data_train.rf <- Data_train %>% 
+  select(feature_selected.rf$feature,label)
+Data_test.rf <- Data_test %>% 
+  select(feature_selected.rf$feature,label)
+
+randomForest.fixmodel <- randomForest(label ~ . ,
+                                      data = Data_train.rf)
+```
+
+#Predict
+```{r}
+rf.predict <- predict(randomForest.fixmodel,
+                 newdata = Data_test.rf %>% 
+                   select(-label) ,
+                 type = "prob")
+
+rf.pred <- ifelse(rf.predict[,2]>=0.5,0,1) %>% 
+  as.factor()
+
+confusionMatrix(rf.pred,
+                Data_test.rf$label,
+                positive = "1")
+
+auc(Data_test.rf$label,rf.pred %>% 
+      as.numeric)
+```
+#Comparing Logistic Regression to Random Forest Alghoritm
+```{r}
+cf_logreg <- confusionMatrix(logreg.pred,
+                             Data_test$label %>% 
+                               as.factor(),
+                             positive = "1")
+
+cf_rf <- confusionMatrix(rf.pred,
+                Data_test.rf$label,
+                positive = "1")
+cf_logreg$table
+```
+```{r}
+cf_rf$table
+```
+From those crosstab prediction and reference in logistic regression and Random Forest algorithm, we can see that it criss-cross each other. Thus based on that, the best approach method for this classification is to ensemble these algorithm (Logistic Regression and Random Forest).   
+
+The ensemble approach Method in this project is Multistage Combination Method. Multistage Combination is method that use a serial approach where the next base-learner is trained with or tested only the instance where the previous base-learners are not accurate enough. [1] (Alpaydn, 2010).
+
+Multistage Combination : 
+1. The first-stage Learner is Logistic Regression, because the uncomplexity of the algorithm for large data and the performance of it before.
+2. The Second-stage Learner is Logistic Regression, because after the first stage. the data will be reduced, so the complexity of the algorithm for large data is is not problem for Random Forest Algorithm. It will be efficient in computational aspect.
+
+#Ensemble 
+## Multistage Combination
+### First Base Learner - Logistic Regression
+```{r}
+Data_train_1stStage <- Data_train_logreg
+Data_test_1stStage <- Data_test_logreg
+
+first_stage.model<-  glm(label ~ ., 
+                         data=Data_test_1stStage, 
+                         family=binomial(link="logit"))
+
+summary(first_stage.model)
+```
+#Predict
+```{r}
+first_stage.predict <- predict(first_stage.learner.logreg, 
+                          Data_test_1stStage %>% 
+                            select(-label), 
+                          type="response")  
+
+first_stage.pred <- ifelse(logreg.predict>=0.5,1,0) %>% 
+  as.factor
+
+confusionMatrix(first_stage.pred,
+                Data_test_1stStage$label %>% 
+                  as.factor(),
+                positive = "1")
+```
+#Subset Data Testing
+Subset the data test that not accurately classified
+```{r}
+df_first_stage.pred <- first_stage.pred %>% 
+  as.data.frame()
+
+colnames(df_first_stage.pred) <- "label_pred"
+
+subset.data_test <- df_first_stage.pred%>%
+  mutate(bookingID=rownames(df_first_stage.pred)) %>% 
+  left_join(Data_test %>% 
+              mutate(bookingID=rownames(Data_test)),
+                     by="bookingID") %>% 
+  mutate(val=ifelse(label_pred==label,"T","F"))
+```
+
+#Result of the classification in the 1st Stage
+```{r}
+first_stage.prediction <- subset.data_test %>% 
+  filter(val=="T") %>% 
+  select(label_pred,bookingID) %>% 
+  column_to_rownames(var = "bookingID")
+```
+
+```{r}
+Data_test_2ndStage.temp <- subset.data_test %>% 
+  filter(val!="T") %>% 
+  select(-val,bookingID,-label_pred) %>% 
+  column_to_rownames(var = "bookingID")
+```
+
+### Second Learner - Random Forest
+```{r}
+Data_train_2ndStage <- Data_train.rf
+Data_test_2ndStage <- Data_test_2ndStage.temp %>% 
+    select(feature_selected.rf$feature,label)
+
+second_stage.model <- randomForest(label ~ . ,
+                                   data = Data_train_2ndStage)
+```
+
+```{r}
+second_stage.predict <- predict(second_stage.model,
+                 newdata = Data_test_2ndStage %>% select(-label) ,
+                 type = "prob")
+
+second_stage.pred <- ifelse(second_stage.predict[,2]>=0.5,0,1) %>% 
+  as.factor()
+
+confusionMatrix(second_stage.pred,
+                Data_test_2ndStage$label,
+                positive = "1")
+
+auc(Data_test_2ndStage$label,
+    second_stage.pred %>% as.numeric)
+```
+
+##Result of the classification in the 2nd Stage
+```{r}
+second_stage.prediction <- second_stage.pred %>% 
+  as.data.frame()
+colnames(second_stage.prediction) <- "label_pred"
+```
+
+##The Final Result
+```{r}
+df_final_result <- Data_test %>% 
+              mutate(bookingID=rownames(Data_test)) %>% 
+              select(bookingID,label) %>% 
+  left_join(first_stage.prediction%>%
+              mutate(bookingID=rownames(first_stage.prediction)) %>% 
+              bind_rows(second_stage.prediction %>%
+                          mutate(bookingID=rownames(second_stage.prediction))),
+            by="bookingID")
+```
+
+#Evaluation of the final result
+```{r}
+confusionMatrix(df_final_result$label_pred,
+                df_final_result$label,
+                positive = "1")
+
+cat("\n\n AUC \n")
+auc(df_final_result$label,
+    df_final_result$label_pred %>% as.numeric())
+```
+
+###Demo Model Deployment
+#Function with Parameter Argument in the form of path folder where the dataset belong in string.
+Example : "E:/Grab/Data-HoldOut_Test/"
+  
+  
+#Feature_extraction Function
+```{r}
+feature_extract <- function(dataset){
+  getmode <- function(v) {
+   uniqv <- unique(v)
+   uniqv[which.max(tabulate(match(v, uniqv)))]
+  }
+  
+  feature_set.ho <- dataset%>% 
+  mutate(
+    distance = second*Speed,
+    acceleration_total = sqrt((acceleration_x^2)+(acceleration_y^2)+(acceleration_z^2)),
+    gyro_total = sqrt((gyro_x^2)+(gyro_y^2)+(gyro_z^2))
+  ) %>% 
+  group_by(bookingID) %>% 
+  summarise(
+    n = n(),
+    label = getmode(label),
+    Accuracy_mean = mean(Accuracy),
+    Accuracy_mode = getmode(Accuracy),
+    Accuracy_median = median(Accuracy),
+    Accuracy_sd = var(Accuracy),
+    Accuracy_min = min(Accuracy),
+    Accuracy_max = max(Accuracy),
+    Bearing_mean = mean(Bearing),
+    Bearing_mode = getmode(Bearing),
+    Bearing_median = median(Bearing),
+    Bearing_sd = var(Bearing),
+    Bearing_min = min(Bearing),
+    Bearing_max = max(Bearing),
+    acceleration_x_mean = mean(acceleration_x),
+    acceleration_x_mode = getmode(acceleration_x),
+    acceleration_x_median = median(acceleration_x),
+    acceleration_x_sd = var(acceleration_x),
+    acceleration_x_min = min(acceleration_x),
+    acceleration_x_max = max(acceleration_x),
+    acceleration_y_mean = mean(acceleration_y),
+    acceleration_y_mode = getmode(acceleration_y),
+    acceleration_y_median = median(acceleration_y),
+    acceleration_y_sd = var(acceleration_y),
+    acceleration_y_min = min(acceleration_y),
+    acceleration_y_max = max(acceleration_y),
+    acceleration_z_mean = mean(acceleration_z),
+    acceleration_z_mode = getmode(acceleration_z),
+    acceleration_z_median = median(acceleration_z),
+    acceleration_z_sd = var(acceleration_z),
+    acceleration_z_min = min(acceleration_z),
+    acceleration_z_max = max(acceleration_z),
+    gyro_x_mean = mean(gyro_x),
+    gyro_x_mode = getmode(gyro_x),
+    gyro_x_median = median(gyro_x),
+    gyro_x_sd = var(gyro_x),
+    gyro_x_min = min(gyro_x),
+    gyro_x_max = max(gyro_x),
+    gyro_y_mean = mean(gyro_y),
+    gyro_y_mode = getmode(gyro_y),
+    gyro_y_median = median(gyro_y),
+    gyro_y_sd = var(gyro_y),
+    gyro_y_min = min(gyro_y),
+    gyro_y_max = max(gyro_y),
+    gyro_z_mean = mean(gyro_z),
+    gyro_z_mode = getmode(gyro_z),
+    gyro_z_median = median(gyro_z),
+    gyro_z_sd = var(gyro_z),
+    gyro_z_min = min(gyro_z),
+    gyro_z_max = max(gyro_z),
+    speed_mean = mean(Speed),
+    speed_mode = getmode(Speed),
+    speed_median = median(Speed),
+    speed_sd = var(Speed),
+    speed_min = min(Speed),
+    speed_max = max(Speed),
+    second_mean = mean(second),
+    second_mode = getmode(second),
+    second_median = median(second),
+    second_sd = var(second),
+    second_min = min(second),
+    second_max = max(second),
+    second_total = sum(second),
+    distance_mean = mean(distance),
+    distance_mode = getmode(distance),
+    distance_median = median(distance),
+    distance_sd = var(distance),
+    distance_min = min(distance),
+    distance_max = max(distance),
+    distance_total = sum(distance),
+    acceleration_total_mean = mean(acceleration_total),
+    acceleration_total_mode = getmode(acceleration_total),
+    acceleration_total_median = median(acceleration_total),
+    acceleration_total_sd = var(acceleration_total),
+    acceleration_total_min = min(acceleration_total),
+    acceleration_total_max = max(acceleration_total),
+    gyro_total_mean = mean(gyro_total),
+    gyro_total_mode = getmode(gyro_total),
+    gyro_total_median = median(gyro_total),
+    gyro_total_sd = var(gyro_total),
+    gyro_total_min = min(gyro_total),
+    gyro_total_max = max(gyro_total),
+  ) %>% 
+  mutate(
+    acceleration_agr_mean = sqrt((acceleration_x_mean^2) + 
+                                 (acceleration_y_mean^2)+
+                                 (acceleration_z_mean^2)),
+    acceleration_agr_mode = sqrt((acceleration_x_mode^2) + 
+                                 (acceleration_y_mode^2)+
+                                 (acceleration_z_mode^2)),
+    acceleration_agr_median = sqrt((acceleration_x_median^2) + 
+                                 (acceleration_y_median^2)+
+                                 (acceleration_z_median^2)),
+    acceleration_agr_min = sqrt((acceleration_x_min^2) + 
+                                 (acceleration_y_min^2)+
+                                 (acceleration_z_min^2)),
+    acceleration_agr_max = sqrt((acceleration_x_max^2) + 
+                                 (acceleration_y_max^2)+
+                                 (acceleration_z_max^2)),
+    gyro_agr_mean = sqrt((gyro_x_mean^2) + 
+                                 (gyro_y_mean^2)+
+                                 (gyro_z_mean^2)),
+    gyro_agr_mode = sqrt((gyro_x_mode^2) + 
+                                 (gyro_y_mode^2)+
+                                 (gyro_z_mode^2)),
+    gyro_agr_median = sqrt((gyro_x_median^2) + 
+                                 (gyro_y_median^2)+
+                                 (gyro_z_median^2)),
+    gyro_agr_min = sqrt((gyro_x_min^2) + 
+                                 (gyro_y_min^2)+
+                                 (gyro_z_min^2)),
+    gyro_agr_max = sqrt((gyro_x_max^2) + 
+                                 (gyro_y_max^2)+
+                                 (gyro_z_max^2))
+  ) %>% 
+  select(
+    bookingID,
+    label,
+    n,
+    Accuracy_mean,
+    Bearing_sd,
+    acceleration_x_mean,
+    acceleration_x_sd,
+    acceleration_x_min,
+    acceleration_x_max,
+    acceleration_y_mean,
+    acceleration_y_sd,
+    acceleration_y_min,
+    acceleration_y_max,
+    acceleration_z_mean,
+    acceleration_z_sd,
+    acceleration_z_min,
+    acceleration_z_max,
+    gyro_x_mean,
+    gyro_x_sd,
+    gyro_x_min,
+    gyro_x_max,
+    gyro_y_mean,
+    gyro_y_sd,
+    gyro_y_min,
+    gyro_y_max,
+    gyro_z_mean,
+    gyro_z_sd,
+    gyro_z_min,
+    gyro_z_max,
+    contains("agr"),
+    contains("total"),
+    contains("speed"),
+    distance_total
+  ) %>%
+  column_to_rownames(var = "bookingID")
+  
+  return(feature_set.ho)
+}
+```
+
+first_stage function
+```{r}
+first_stage <- function(dataset){
+  data_test_1 <- dataset %>% 
+       select(feature_selected.logreg$feature,label)
+  
+  first_stage.p <- predict(first_stage.learner.logreg, 
+                          newdata = data_test_1 %>% 
+                            select(-label), 
+                          type="response")
+  first_stage.p_ <- ifelse(first_stage.p>=0.5,1,0) %>% as.factor
+  df_first_stage.p <- first_stage.p_ %>% as.data.frame()
+  
+  colnames(df_first_stage.p) <- "label_pred"
+  
+  subset.data_test.p <- df_first_stage.p%>%
+    mutate(bookingID=rownames(df_first_stage.p)) %>% 
+    left_join(dataset %>% 
+              mutate(bookingID=rownames(dataset)),
+                     by="bookingID") %>% 
+    mutate(val=ifelse(label_pred==label,"T","F"))
+  
+  result_first_stage <- subset.data_test.p %>% 
+    filter(val=="T") %>% 
+    select(label_pred,bookingID) %>% 
+    column_to_rownames(var = "bookingID")
+  
+  return(result_first_stage);
+}
+```
+
+Second_stage function
+```{r}
+second_stage <- function(dataset,result_first_stage){
+  data_test_2 <- dataset %>% 
+    mutate(bookingID=rownames(dataset)) %>% 
+    anti_join(result_first_stage%>% 
+                mutate(bookingID=rownames(result_first_stage)) ,by="bookingID") %>% 
+    select(feature_selected.rf$feature,label,bookingID) %>% 
+    column_to_rownames(var = "bookingID")
+  
+  second_stage.p <- predict(second_stage.model,
+                            newdata =data_test_2 %>% select(-label) ,
+                            type = "prob")
+  second_stage.p_ <- ifelse(second_stage.p[,2]>=0.5,0,1) %>% 
+    as.factor()
+  
+  result_second_stage <- second_stage.p_ %>% as.data.frame()
+  
+  colnames(result_second_stage) <- "label_pred"
+  
+  return(result_second_stage);
+}
+```
+
+#Multistage_function
+```{r}
+multistage_comb.log.rf <- function(path_folder_holdout_dataset){
+  #Read Data
+  path <-  path_folder_holdout_dataset
+  temp <-  list.files(path)
+  data_temp <- list() 
+  
+  for (i in 1:length(temp)){ 
+  link <- paste(path,temp[i],sep = "")
+  data_temp[[i]] <- fread(link) 
+  }
+  
+  holdout_dataset <- reduce(data_temp,bind_rows)
+  rm(data_temp)
+  #Feature Extraction
+  feature.ho <- feature_extract(holdout_dataset)
+  #Data Test Preparation
+  first_stage.result <- first_stage(feature.ho)
+  second_stage.result <- second_stage(feature.ho,first_stage.result)
+  
+  #Final Result
+  final_result <- feature.ho %>% 
+              mutate(bookingID=rownames(feature.ho)) %>% 
+              select(bookingID,label) %>% 
+    left_join(first_stage.result%>%
+              mutate(bookingID=rownames(first_stage.result)) %>% 
+              bind_rows(second_stage.result%>%
+                          mutate(bookingID=rownames(second_stage.result))),
+            by="bookingID")
+  dir.create("result")
+  write_csv(final_result,"result/Result.csv")
+  return(final_result);
+}
+```
+
+#Example Of Demo
+#It assume that the Dataset Test has been joined with label so it can measure performance directly. And its requirement to run the model into the second stage
+```{r}
+n_ex <- nrow(data_clean)
+i_test_ex <- sample(1:n_ex,size = 0.01 * n_ex)
+test_example <- data_clean[i_test_ex,] 
+test_example <- test_example%>% 
+  left_join(label,by="bookingID")
+
+dir.create("demo")
+
+write.csv(test_example,"demo/Data_Test_Example.csv")
+
+path_data_test <- "demo/"
+
+trial <- multistage_comb.log.rf(path_data_test)
+trial %>% arrange(bookingID)
+```
